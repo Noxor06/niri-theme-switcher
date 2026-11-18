@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Usage: dms-preset [next|prev|pick]
+root="$HOME/.config/dms/presets"
+state="$HOME/.cache/dms-preset-current"
+settings="$HOME/.config/dms/settings.json"
+
+mapfile -t presets < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
+n=${#presets[@]}
+[ "$n" -eq 0 ] && { notify-send "DMS presets" "None found in $root"; exit 1; }
+
+# Position of the current preset (remembered in a state file)
+cur=$(cat "$state" 2>/dev/null)
+idx=-1
+for i in "${!presets[@]}"; do
+  [ "${presets[$i]}" = "$cur" ] && idx=$i
+done
+
+case "${1:-next}" in
+  next) idx=$(( (idx + 1) % n )) ;;
+  prev) [ "$idx" -lt 0 ] && idx=0; idx=$(( (idx - 1 + n) % n )) ;;
+  pick)
+    t="$cur/theme.json"
+    [ -f "$t" ] || t="${presets[0]}/theme.json"
+    bg=$(jq -r '.dark.background' "$t");  alt=$(jq -r '.dark.surface' "$t")
+    fg=$(jq -r '.dark.surfaceText' "$t"); acc=$(jq -r '.dark.primary' "$t")
+    acct=$(jq -r '.dark.primaryText' "$t"); mut=$(jq -r '.dark.outline' "$t")
+
+    menu=(rofi -dmenu -i -no-custom -p "Theme"
+      -theme "$HOME/.config/rofi/preset-picker.rasi"
+      -theme-str "* { bg: ${bg}ee; bg-alt: ${alt}; fg: ${fg}; accent: ${acc}; accent-text: ${acct}; muted: ${mut}; }")
+
+    choice=$(for p in "${presets[@]}"; do basename "$p"; done | "${menu[@]}")
+    [ -z "$choice" ] && exit 0
+    for i in "${!presets[@]}"; do
+      [ "$(basename "${presets[$i]}")" = "$choice" ] && idx=$i
+    done
+    ;;
+esac
+
+dir="${presets[$idx]}"
+theme="$dir/theme.json"
+wall=$(find "$dir" -maxdepth 1 -type f -iname 'wallpaper.*' | head -n1)
+echo "$dir" > "$state"
+
+active="$HOME/.config/dms/active-theme.json"
+
+echo "debug: theme=$theme active=$active"
+# Overwrite the watched file in place; DMS should reload it live
+cp "$theme" "$active"
+
+# Apply the wallpaper
+[ -n "$wall" ] && dms ipc call wallpaper set "$wall"
+
+notify-send "DMS theme" "$(basename "$dir")"
